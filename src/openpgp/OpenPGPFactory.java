@@ -21,16 +21,16 @@ package openpgp;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Constructor;
 import java.security.NoSuchAlgorithmException;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream;
-
 public class OpenPGPFactory {
+	private static final String BZIP2_INPUT_CLASS = "org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream";
+	private static final String BZIP2_OUTPUT_CLASS = "org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream";
 
 	public static InputStream getInputStream(InputStream is, String password)
 			throws NoSuchAlgorithmException, IOException,
@@ -40,7 +40,7 @@ public class OpenPGPFactory {
 
 	public static OutputStream getOutputStream(OutputStream os, String password)
 			throws NoSuchAlgorithmException, IOException {
-		return getOutputStream(os, password, OpenPGPCompression.BZIP2);
+		return getOutputStream(os, password, OpenPGPCompression.ZLIB);
 	}
 
 	public static OutputStream getOutputStream(OutputStream os,
@@ -55,7 +55,7 @@ public class OpenPGPFactory {
 
 		OpenPGPFilterInputStream in = new OpenPGPCipherInputStream(is,
 				password, bufsize);
-		InputStream res = in;
+		InputStream res = null;
 
 		int hint = in.peek();
 		if (hint == -1) {
@@ -75,11 +75,24 @@ public class OpenPGPFactory {
 				res = new InflaterInputStream(ci, new Inflater());
 				break;
 			case BZIP2:
-				res = new BZip2CompressorInputStream(ci);
+				try {
+					Class<?> clazz = Class.forName(BZIP2_INPUT_CLASS);
+					for (Constructor<?> ctor : clazz.getConstructors()) {
+						if (ctor.getParameterTypes().length == 1) {
+							res = (InputStream) ctor.newInstance(ci);
+						}
+					}
+				} catch (Exception e) {
+					ci.close();
+					throw new IOException("Unable to load apache commons bzip2 class");
+				}
 				break;
 			default:
 				res = ci;
+				break;
 			}
+		} else {
+			res = in;
 		}
 
 		res = new OpenPGPLiteralInputStream(res, bufsize);
@@ -104,7 +117,17 @@ public class OpenPGPFactory {
 					Deflater.BEST_COMPRESSION, false));
 			break;
 		case BZIP2:
-			res = new BZip2CompressorOutputStream(res);
+			try {
+				Class<?> clazz = Class.forName(BZIP2_OUTPUT_CLASS);
+				for (Constructor<?> ctor : clazz.getConstructors()) {
+					if (ctor.getParameterTypes().length == 1) {
+						res = (OutputStream) ctor.newInstance(res);
+					}
+				}
+			} catch (Exception e) {
+				res.close();
+				throw new IOException("Unable to load apache commons bzip2 class");
+			}
 			break;
 		default:
 			break;
